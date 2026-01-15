@@ -201,6 +201,19 @@ class ProxyManager:
             if self.proxies[self.current_proxy_index] == proxy:
                 self._rotate_proxy()
 
+    # Aliases for compatibility with SteamClient
+    def record_success(self, proxy: str):
+        """Alias for report_success."""
+        self.report_success(proxy)
+
+    def record_error(self, proxy: str):
+        """Alias for report_error."""
+        self.report_error(proxy, is_rate_limit=False)
+
+    def record_rate_limit(self, proxy: str):
+        """Alias for report_error with rate limit flag."""
+        self.report_error(proxy, is_rate_limit=True)
+
     def get_stats_summary(self) -> dict:
         """
         Получить сводную статистику.

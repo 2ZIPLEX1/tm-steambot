@@ -57,14 +57,18 @@ logs/
 *steam_guard*
 *secrets*
 steam_cookies*.txt
+steam_cookies*.json
 *.html
 accounts.json
 bot_config.json
 scanner_config.json
+steam_account.json
+wallet_*.json
+temp_config_*.json
 
 # Proxies - NEVER COMMIT!
 proxies.txt
-proxies.example.txt
+# proxies.example.txt is OK to commit (no real credentials)
 
 # Exports
 exports/

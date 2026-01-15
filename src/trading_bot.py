@@ -259,10 +259,17 @@ class TradingBot:
         if not steamid or not identity_secret:
             logger.warning(f"[{self.name}] Steam ID or identity_secret not available, confirmations may fail")
 
-        # Проверяем баланс
-        balance = self.account.get_wallet_balance()
+        # Проверяем баланс (используем кешированный если есть, чтобы не делать лишние запросы)
+        if hasattr(self.account, '_cached_steam_balance') and self.account._cached_steam_balance:
+            balance = self.account._cached_steam_balance.get('balance', 0.0)
+            logger.debug(f"[{self.name}] Using cached balance: {balance:.2f}")
+        else:
+            # Если кеша нет, запрашиваем баланс (но лучше сначала нажать "Определить валюту")
+            balance = self.account.get_wallet_balance()
+            logger.debug(f"[{self.name}] Fetched balance from Steam: {balance:.2f}")
+
         if balance < 1.0:
-            logger.warning(f"[{self.name}] Insufficient balance: {balance:.2f}")
+            logger.warning(f"[{self.name}] Insufficient balance: {balance:.2f}. Tip: Click '🔍 Валюта' button to detect currency and balance.")
             return {'success': 0, 'failed': 0, 'skipped': 0, 'confirmed': 0}
 
         # Получаем прибыльные предметы

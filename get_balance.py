@@ -1,106 +1,83 @@
 """
 Получение баланса Steam
-Использует cookies из steam_cookies.json для получения баланса
+Использует новый метод SteamWalletChecker с 2FA авторизацией
 """
 
 import os
 import json
-from src.steam_market_scraper import SteamMarketScraper
+from src.steam_wallet_checker import SteamWalletBalance
 
 
-def load_account_data(filepath='account.txt'):
-    """Загружает данные аккаунта из файла"""
+def load_account_data(filepath='steam_account.json'):
+    """Загружает данные аккаунта из JSON файла"""
     if not os.path.exists(filepath):
-        return None, "Файл account.txt не найден"
+        # Пробуем найти в SteamWalletChecker
+        alt_path = os.path.join('SteamWalletChecker', 'steam_account.json')
+        if os.path.exists(alt_path):
+            filepath = alt_path
+        else:
+            return None, f"Файл {filepath} не найден"
 
-    data = {}
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if '=' in line and not line.startswith('#'):
-                    key, value = line.split('=', 1)
-                    data[key.strip()] = value.strip()
+            data = json.load(f)
 
-        username = data.get('STEAM_USERNAME')
-        password = data.get('STEAM_PASSWORD')
-        shared_secret = data.get('STEAM_SHARED_SECRET')
-        proxy = data.get('PROXY')
+        username = data.get('username')
+        password = data.get('password')
+        shared_secret = data.get('shared_secret')
 
-        if not username or not password:
-            return None, "STEAM_USERNAME или STEAM_PASSWORD не найдены в account.txt"
+        if not username or not password or not shared_secret:
+            return None, "username, password или shared_secret не найдены в конфиге"
 
         return {
             'username': username,
             'password': password,
             'shared_secret': shared_secret,
-            'proxy': proxy
+            'config_path': filepath
         }, None
 
     except Exception as e:
         return None, f"Ошибка чтения файла: {e}"
 
 
-def load_manual_cookies():
-    """Load cookies from steam_cookies.json if exists"""
-    import json
-    import os
-
-    if os.path.exists('steam_cookies.json'):
-        try:
-            with open('steam_cookies.json', 'r', encoding='utf-8') as f:
-                cookies = json.load(f)
-            if cookies and 'sessionid' in cookies:
-                return cookies, None
-        except Exception as e:
-            return None, f"Error reading steam_cookies.json: {e}"
-
-    return None, "steam_cookies.json not found"
-
-
 def main():
     """Основная функция"""
     print("=" * 70)
-    print("STEAM BALANCE CHECKER")
+    print("STEAM BALANCE CHECKER (New SteamKit2 Method)")
     print("=" * 70)
     print()
 
-    # Load cookies
-    print("Loading cookies from steam_cookies.json...")
-    cookies, error = load_manual_cookies()
+    # Load account config
+    print("Loading account configuration...")
+    account, error = load_account_data()
 
-    if error or not cookies:
-        print(f"[X] Error: {error or 'No cookies found'}")
+    if error or not account:
+        print(f"[X] Error: {error or 'No account config found'}")
         print()
         print("=" * 70)
-        print("PLEASE CREATE steam_cookies.json")
+        print("PLEASE CREATE steam_account.json")
         print("=" * 70)
         print()
-        print("You need to extract cookies from your browser:")
+        print("You need to create a config file with your Steam credentials:")
         print()
-        print("1. Login to steamcommunity.com in browser")
-        print("2. Press F12 -> Application -> Cookies")
-        print("3. Copy 'sessionid' and 'steamLoginSecure' values")
-        print("4. Create steam_cookies.json with format:")
+        print("Create steam_account.json with format:")
         print('   {')
-        print('     "sessionid": "your_sessionid",')
-        print('     "steamLoginSecure": "your_steamLoginSecure"')
+        print('     "username": "your_steam_login",')
+        print('     "password": "your_steam_password",')
+        print('     "shared_secret": "your_shared_secret_base64"')
         print('   }')
+        print()
+        print("To get shared_secret:")
+        print("1. Use Steam Desktop Authenticator")
+        print("2. Open maFiles/YOUR_STEAMID.maFile")
+        print("3. Copy 'shared_secret' value")
         print()
         return
 
-    print("[OK] Cookies loaded")
-    print(f"  sessionid: {cookies.get('sessionid', 'N/A')[:20]}...")
-    print(f"  steamLoginSecure: {'YES' if 'steamLoginSecure' in cookies else 'NO'}")
+    print("[OK] Account config loaded")
+    print(f"  Username: {account.get('username', 'N/A')}")
+    print(f"  Shared secret: {'YES' if account.get('shared_secret') else 'NO'}")
     print()
-
-    # Load proxy from account.txt if exists
-    proxy = None
-    account, _ = load_account_data()
-    if account and account.get('proxy'):
-        proxy = account.get('proxy')
-        print(f"Using proxy: {proxy}")
-        print()
 
     # Get balance
     print("-" * 70)
@@ -108,8 +85,17 @@ def main():
     print("-" * 70)
     print()
 
-    scraper = SteamMarketScraper(cookies, proxy=proxy)
-    result = scraper.get_balance()
+    # Используем новый метод
+    if 'config_path' in account:
+        checker = SteamWalletBalance(config_path=account['config_path'])
+    else:
+        checker = SteamWalletBalance(
+            username=account['username'],
+            password=account['password'],
+            shared_secret=account['shared_secret']
+        )
+
+    result = checker.get_balance()
 
     print()
     print("=" * 70)
@@ -120,17 +106,22 @@ def main():
     if result['success']:
         print("SUCCESS!")
         print()
-        print(f"  Balance:  {result['balance']} {result['currency']}")
-        print(f"  Raw:      {result['raw_balance']}")
-        print(f"  Method:   {result['method']}")
+        print(f"  Balance:      {result['balance']} {result['currency']}")
+        print(f"  Raw:          {result['raw_balance']}")
+        print(f"  USD:          ${result.get('balance_usd', 0):.2f}")
+        print(f"  Country:      {result.get('country_code', 'N/A')}")
+        print(f"  Method:       {result['method']}")
+        print()
+        print("New method with SteamKit2 works perfectly!")
     else:
         print("ERROR!")
         print()
         print(f"  Message: {result.get('error')}")
         print()
-        print("If you see 'Not authorized' error:")
-        print("  - Update cookies from browser")
-        print("  - Make sure you're logged in to steamcommunity.com")
+        print("If you see authentication errors:")
+        print("  - Check your username and password")
+        print("  - Verify shared_secret is correct (Base64 format)")
+        print("  - Make sure 2FA is enabled on your account")
 
     print()
     print("=" * 70)

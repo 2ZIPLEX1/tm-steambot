@@ -96,14 +96,25 @@ class SteamClient:
     BASE_URL = "https://steamcommunity.com"
     MARKET_URL = f"{BASE_URL}/market"
 
-    def __init__(self):
-        """Initialize Steam client."""
+    def __init__(self, proxy: Optional[str] = None, proxy_manager=None):
+        """
+        Initialize Steam client.
+
+        Args:
+            proxy: Single proxy URL (socks5://user:pass@host:port)
+            proxy_manager: ProxyManager instance for automatic proxy rotation
+        """
         self._session: Optional[requests.Session] = None
         self._sessionid: Optional[str] = None
         self._last_request_time = 0.0
         self._logged_in = False
         self._use_manual_cookies = False
         self._cookie_file: str = "steam_cookies.txt"  # Default cookie file
+
+        # Proxy support
+        self._proxy = proxy
+        self._proxy_manager = proxy_manager
+        self._current_proxy = proxy  # Track current proxy
 
     def load_cookies_from_file(self, cookie_file: str = "steam_cookies.txt") -> bool:
         """
@@ -140,6 +151,9 @@ class SteamClient:
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
         })
+
+        # Setup proxy if provided
+        self._setup_proxy()
 
         # Read cookies from file
         cookies = {}
@@ -205,6 +219,63 @@ class SteamClient:
 
         return True
 
+    def _setup_proxy(self):
+        """Setup proxy for session."""
+        if not self._session:
+            return
+
+        proxy_url = self._current_proxy
+        if not proxy_url and self._proxy_manager:
+            # Get proxy from manager
+            proxy_url = self._proxy_manager.get_next_proxy()
+            self._current_proxy = proxy_url
+
+        if proxy_url:
+            self._session.proxies = {
+                'http': proxy_url,
+                'https': proxy_url,
+            }
+            logger.info(f"Using proxy: {proxy_url}")
+        else:
+            self._session.proxies = {}
+
+    def _rotate_proxy(self, reason: str = "rate_limit"):
+        """
+        Rotate to next proxy on error.
+
+        Args:
+            reason: Reason for rotation (rate_limit, error, etc.)
+        """
+        if not self._proxy_manager:
+            logger.warning("Cannot rotate proxy: ProxyManager not configured")
+            return False
+
+        # Mark current proxy as having an issue
+        if self._current_proxy:
+            if reason == "rate_limit":
+                self._proxy_manager.record_rate_limit(self._current_proxy)
+            else:
+                self._proxy_manager.record_error(self._current_proxy)
+
+        # Get next proxy
+        next_proxy = self._proxy_manager.get_next_proxy(skip_unhealthy=True)
+        if not next_proxy:
+            logger.error("No healthy proxies available!")
+            return False
+
+        old_proxy = self._current_proxy
+        self._current_proxy = next_proxy
+
+        # Update session
+        if self._session:
+            self._session.proxies = {
+                'http': next_proxy,
+                'https': next_proxy,
+            }
+
+        logger.info(f"🔄 Proxy rotated: {old_proxy} -> {next_proxy} (reason: {reason})")
+        return True
+
     def _save_cookies_to_file(self, cookie_file: str = "steam_cookies.txt"):
         """
         Save current session cookies to file for future use.
@@ -264,8 +335,23 @@ class SteamClient:
             except requests.exceptions.RequestException as e:
                 last_error = e
                 if "429" in str(e) or "Too Many Requests" in str(e):
+                    # Get the function name that called _retry_on_error
+                    import inspect
+                    caller_frame = inspect.currentframe().f_back.f_back
+                    caller_name = caller_frame.f_code.co_name if caller_frame else "unknown"
+
+                    # Try to rotate proxy if available
+                    if self._proxy_manager and attempt < self.MAX_RETRIES - 1:
+                        logger.warning(f"Rate limited in {caller_name}(), rotating proxy... (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                        if self._rotate_proxy(reason="rate_limit"):
+                            # Proxy rotated, retry immediately without waiting
+                            logger.info("Retrying with new proxy...")
+                            continue
+                        else:
+                            logger.warning("Failed to rotate proxy, falling back to wait")
+
                     wait_time = self.RETRY_DELAY * (attempt + 1)
-                    logger.warning(f"Rate limited, waiting {wait_time}s...")
+                    logger.warning(f"Rate limited in {caller_name}(), waiting {wait_time}s... (attempt {attempt + 1}/{self.MAX_RETRIES})")
                     time.sleep(wait_time)
                 else:
                     raise
@@ -581,6 +667,7 @@ class SteamClient:
         # Create session if not exists
         if self._session is None:
             self._session = requests.Session()
+            self._setup_proxy()  # Setup proxy for new session
 
         headers = kwargs.pop('headers', {})
         headers.update({

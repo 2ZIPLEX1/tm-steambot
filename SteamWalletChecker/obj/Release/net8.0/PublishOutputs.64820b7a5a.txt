@@ -1,0 +1,13 @@
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamWalletChecker.exe
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamWalletChecker.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamWalletChecker.deps.json
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamWalletChecker.runtimeconfig.json
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamWalletChecker.pdb
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\protobuf-net.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\protobuf-net.Core.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\SteamKit2.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\System.IO.Hashing.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\System.IO.Pipelines.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\System.Text.Encodings.Web.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\System.Text.Json.dll
+C:\git projects\test_devkit\SteamWalletChecker\bin\Release\net8.0\publish\runtimes\browser\lib\net8.0\System.Text.Encodings.Web.dll

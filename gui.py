@@ -26,7 +26,6 @@ from src.account_manager import AccountManager
 from src.trading_bot import TradingBot
 from src.database import trades_db
 from src.currency_converter import currency_converter
-from src.auto_buyer import AutoBuyer
 from src.auto_scanner import AutoScanner
 from src.proxy_manager import ProxyManager
 from src.statistics import TradingStatistics
@@ -66,7 +65,6 @@ class TradingBotGUI(ctk.CTk):
         self.sort_by_profit = False  # False = по умолчанию (по дате), True = по профиту
 
         # Новые модули
-        self.auto_buyer: Optional[AutoBuyer] = None
         self.auto_scanner: Optional[AutoScanner] = None
         self.proxy_manager: Optional[ProxyManager] = None
         self.statistics: Optional[TradingStatistics] = None
@@ -92,12 +90,6 @@ class TradingBotGUI(ctk.CTk):
             'scanner_max_items': 10,  # Reduced to avoid rate limits
             'scanner_delay': 7.0,  # Increased delay to avoid 429 errors
             'scanner_workers': 1,  # Reduced workers to avoid overwhelming proxies
-            # Auto Buyer настройки
-            'auto_buy_enabled': False,
-            'auto_buy_max_items': 10,
-            'auto_buy_max_price': 1000.0,
-            'auto_buy_total_budget': 5000.0,
-            'auto_buy_min_profit': 15.0,
             # Auto Scanner настройки
             'auto_scan_enabled': False,
             'auto_scan_interval': 30,  # минуты
@@ -367,30 +359,6 @@ class TradingBotGUI(ctk.CTk):
             font=ctk.CTkFont(size=13)
         )
         self.scan_new_btn.pack(side="right", padx=5)
-
-        # Кнопка Auto Buy
-        self.auto_buy_btn = ctk.CTkButton(
-            header,
-            text="🛒 Auto Buy",
-            command=self._show_auto_buy_dialog,
-            width=130,
-            height=38,
-            fg_color="#9B59B6",
-            font=ctk.CTkFont(size=13)
-        )
-        self.auto_buy_btn.pack(side="right", padx=5)
-
-        # Кнопка Confirmations
-        self.confirmations_btn = ctk.CTkButton(
-            header,
-            text="✅ Подтв.",
-            command=self._show_confirmations_dialog,
-            width=100,
-            height=38,
-            fg_color="#27AE60",
-            font=ctk.CTkFont(size=13)
-        )
-        self.confirmations_btn.pack(side="right", padx=5)
 
         # Статус сканирования
         self.scanner_status_label = ctk.CTkLabel(
@@ -1133,56 +1101,6 @@ class TradingBotGUI(ctk.CTk):
         workers_info.pack(side="left", padx=10)
 
         # === Настройки Auto Buyer ===
-        auto_buyer_section = ctk.CTkFrame(settings_frame)
-        auto_buyer_section.pack(fill="x", pady=10)
-
-        auto_buyer_label = ctk.CTkLabel(
-            auto_buyer_section,
-            text="🛒 Настройки Auto Buyer (автоматическая покупка)",
-            font=ctk.CTkFont(size=14, weight="bold")
-        )
-        auto_buyer_label.pack(padx=15, pady=10, anchor="w")
-
-        # Макс. предметов для автопокупки
-        ab_max_items_frame = ctk.CTkFrame(auto_buyer_section, fg_color="transparent")
-        ab_max_items_frame.pack(fill="x", padx=15, pady=5)
-
-        ctk.CTkLabel(ab_max_items_frame, text="Макс. предметов:", width=200, anchor="w").pack(side="left", padx=5)
-        self.ab_max_items_entry = ctk.CTkEntry(ab_max_items_frame, width=100, placeholder_text="10")
-        self.ab_max_items_entry.insert(0, str(self.bot_config.get('auto_buy_max_items', 10)))
-        self.ab_max_items_entry.pack(side="left", padx=5)
-        ctk.CTkLabel(ab_max_items_frame, text="(Купить не более N предметов за раз)", text_color="gray").pack(side="left", padx=10)
-
-        # Макс. цена за предмет
-        ab_max_price_frame = ctk.CTkFrame(auto_buyer_section, fg_color="transparent")
-        ab_max_price_frame.pack(fill="x", padx=15, pady=5)
-
-        ctk.CTkLabel(ab_max_price_frame, text="Макс. цена (₽):", width=200, anchor="w").pack(side="left", padx=5)
-        self.ab_max_price_entry = ctk.CTkEntry(ab_max_price_frame, width=100, placeholder_text="1000.0")
-        self.ab_max_price_entry.insert(0, str(self.bot_config.get('auto_buy_max_price', 1000.0)))
-        self.ab_max_price_entry.pack(side="left", padx=5)
-        ctk.CTkLabel(ab_max_price_frame, text="(Не покупать предметы дороже этой цены)", text_color="gray").pack(side="left", padx=10)
-
-        # Общий бюджет
-        ab_budget_frame = ctk.CTkFrame(auto_buyer_section, fg_color="transparent")
-        ab_budget_frame.pack(fill="x", padx=15, pady=5)
-
-        ctk.CTkLabel(ab_budget_frame, text="Общий бюджет (₽):", width=200, anchor="w").pack(side="left", padx=5)
-        self.ab_budget_entry = ctk.CTkEntry(ab_budget_frame, width=100, placeholder_text="5000.0")
-        self.ab_budget_entry.insert(0, str(self.bot_config.get('auto_buy_total_budget', 5000.0)))
-        self.ab_budget_entry.pack(side="left", padx=5)
-        ctk.CTkLabel(ab_budget_frame, text="(Максимальная сумма всех покупок)", text_color="gray").pack(side="left", padx=10)
-
-        # Мин. профит для автопокупки
-        ab_min_profit_frame = ctk.CTkFrame(auto_buyer_section, fg_color="transparent")
-        ab_min_profit_frame.pack(fill="x", padx=15, pady=5)
-
-        ctk.CTkLabel(ab_min_profit_frame, text="Мин. профит (%):", width=200, anchor="w").pack(side="left", padx=5)
-        self.ab_min_profit_entry = ctk.CTkEntry(ab_min_profit_frame, width=100, placeholder_text="15.0")
-        self.ab_min_profit_entry.insert(0, str(self.bot_config.get('auto_buy_min_profit', 15.0)))
-        self.ab_min_profit_entry.pack(side="left", padx=5)
-        ctk.CTkLabel(ab_min_profit_frame, text="(Покупать только с профитом выше этого)", text_color="gray").pack(side="left", padx=10)
-
         # === Настройки Auto Scanner ===
         auto_scanner_section = ctk.CTkFrame(settings_frame)
         auto_scanner_section.pack(fill="x", pady=10)
@@ -1521,12 +1439,6 @@ class TradingBotGUI(ctk.CTk):
             self.bot_config['scanner_delay'] = float(self.delay_entry.get())
             self.bot_config['scanner_workers'] = int(self.workers_entry.get())
 
-            # Auto Buyer настройки
-            self.bot_config['auto_buy_max_items'] = int(self.ab_max_items_entry.get())
-            self.bot_config['auto_buy_max_price'] = float(self.ab_max_price_entry.get())
-            self.bot_config['auto_buy_total_budget'] = float(self.ab_budget_entry.get())
-            self.bot_config['auto_buy_min_profit'] = float(self.ab_min_profit_entry.get())
-
             # Auto Scanner настройки
             self.bot_config['auto_scan_interval'] = int(self.as_interval_entry.get())
 
@@ -1703,6 +1615,55 @@ class TradingBotGUI(ctk.CTk):
             logged_in_count = sum(1 for v in login_results.values() if v)
             self._log(f"✅ Залогинено: {logged_in_count}/{len(login_results)}")
 
+            # Автоматически определяем валюту для аккаунтов, если не была определена
+            self._log("🔍 Проверка валют аккаунтов...")
+            for account in self.account_manager.get_enabled_accounts():
+                if not self.bot_running:
+                    break
+
+                # Проверяем, есть ли кешированный баланс
+                if not hasattr(account, '_cached_steam_balance') or not account._cached_steam_balance:
+                    self._log(f"[{account.name}] Определение валюты через SteamKit2...")
+                    try:
+                        # Используем новый метод через SteamWalletChecker
+                        from src.steam_wallet_checker import SteamWalletBalance
+
+                        checker = SteamWalletBalance(
+                            username=account.config.steam_username,
+                            password=account.config.steam_password,
+                            shared_secret=account.config.steam_shared_secret
+                        )
+
+                        result = checker.get_balance()
+
+                        if result['success']:
+                            detected_currency = result['currency']
+                            balance = result['balance']
+                            balance_usd = result.get('balance_usd', 0)
+
+                            self._log(f"[{account.name}] ✅ Валюта: {detected_currency}, Баланс: {balance:.2f} {detected_currency}")
+
+                            # Обновляем валюту
+                            account.config.currency = detected_currency
+
+                            # Кешируем баланс
+                            account._cached_steam_balance = {
+                                'balance': balance,
+                                'currency': detected_currency,
+                                'balance_usd': balance_usd,
+                                'timestamp': time.time()
+                            }
+                        else:
+                            self._log(f"[{account.name}] ⚠️ Не удалось определить валюту: {result.get('error')}")
+                            self._log(f"[{account.name}] ℹ️ Используется валюта по умолчанию: {account.config.currency}")
+
+                    except Exception as e:
+                        self._log(f"[{account.name}] ❌ Ошибка определения валюты: {e}")
+                        self._log(f"[{account.name}] ℹ️ Используется валюта по умолчанию: {account.config.currency}")
+                else:
+                    cached = account._cached_steam_balance
+                    self._log(f"[{account.name}] ✅ Валюта уже определена: {cached['currency']}, Баланс: {cached['balance']:.2f} {cached['currency']}")
+
             # Главный цикл
             cycle_count = 0
             while self.bot_running:
@@ -1809,21 +1770,39 @@ class TradingBotGUI(ctk.CTk):
             for account in self.account_manager.accounts:
                 if account.name in self.account_balance_labels:
                     try:
-                        # Получаем баланс аккаунта
-                        steam_balance = account.get_wallet_balance()
-                        csgotm_balance = account.get_csgotm_balance()  # Всегда в RUB
+                        # Проверяем, есть ли кешированный баланс
+                        steam_balance = 0.0
+                        if hasattr(account, '_cached_steam_balance') and account._cached_steam_balance:
+                            # Используем кешированный баланс (чтобы не делать лишние запросы к Steam API)
+                            steam_balance = account._cached_steam_balance.get('balance', 0.0)
+                            currency = account._cached_steam_balance.get('currency', 'RUB')
+                        else:
+                            # Если кеша нет, используем валюту из конфига, но НЕ запрашиваем баланс
+                            # Баланс будет показан только после нажатия "Определить валюту"
+                            currency = getattr(account.config, 'currency', 'RUB')
+                            steam_balance = 0.0
 
-                        # Валюта аккаунта
-                        currency = getattr(account.config, 'currency', 'RUB')
+                        # Получаем баланс CSGO.TM (это быстро и не вызывает rate limit)
+                        try:
+                            csgotm_balance = account.get_csgotm_balance()  # Всегда в RUB
+                        except Exception as e:
+                            logger.warning(f"Failed to get CSGO.TM balance for {account.name}: {e}")
+                            csgotm_balance = 0.0
 
                         # Если валюта не RUB, конвертируем TM баланс
                         if currency != 'RUB':
                             # Steam баланс уже в нужной валюте
                             # TM баланс в RUB -> конвертируем в валюту аккаунта
                             csgotm_converted = currency_converter.convert_from_rub(csgotm_balance, currency)
-                            balance_text = f"💰 Steam: {steam_balance:.2f} {currency} | TM: {csgotm_converted:.2f} {currency} ({csgotm_balance:.2f} RUB)"
+                            if steam_balance > 0:
+                                balance_text = f"💰 Steam: {steam_balance:.2f} {currency} | TM: {csgotm_converted:.2f} {currency} ({csgotm_balance:.2f} RUB)"
+                            else:
+                                balance_text = f"💰 Steam: нажмите '🔍 Валюта' | TM: {csgotm_converted:.2f} {currency} ({csgotm_balance:.2f} RUB)"
                         else:
-                            balance_text = f"💰 Steam: {steam_balance:.2f} {currency} | TM: {csgotm_balance:.2f} {currency}"
+                            if steam_balance > 0:
+                                balance_text = f"💰 Steam: {steam_balance:.2f} {currency} | TM: {csgotm_balance:.2f} {currency}"
+                            else:
+                                balance_text = f"💰 Steam: нажмите '🔍 Валюта' | TM: {csgotm_balance:.2f} {currency}"
 
                         self.account_balance_labels[account.name].configure(text=balance_text)
 
@@ -2865,96 +2844,86 @@ class TradingBotGUI(ctk.CTk):
 
     def _detect_account_currency(self, account):
         """
-        Определить валюту аккаунта автоматически из Steam используя SteamMarketScraper.
+        Определить валюту аккаунта автоматически из Steam используя SteamWalletChecker.
 
         Args:
             account: Account instance
         """
         def detect_thread():
             try:
-                from src.steam_market_scraper import SteamMarketScraper
-                import json
-                import os
+                from src.steam_wallet_checker import SteamWalletBalance
 
                 self._log(f"Определение валюты для аккаунта {account.name}...")
 
-                cookies = None
+                # Проверяем наличие необходимых данных
+                if not account.config.steam_username or not account.config.steam_password:
+                    self._log(f"Отсутствуют username или password для {account.name}")
+                    return
 
-                # Попытка 1: Читаем cookies из файла steam_cookies.json (как в get_balance.py)
-                if os.path.exists('steam_cookies.json'):
-                    try:
-                        with open('steam_cookies.json', 'r', encoding='utf-8') as f:
-                            cookies = json.load(f)
-                        if cookies and 'sessionid' in cookies:
-                            sessionid_preview = cookies.get('sessionid', '')[:10] + '...'
-                            has_steamlogin = 'YES' if cookies.get('steamLoginSecure') else 'NO'
-                            steam_country = cookies.get('steamCountry', 'N/A')
-                            self._log(f"Используем cookies из steam_cookies.json")
-                            self._log(f"  sessionid={sessionid_preview}, steamLoginSecure={has_steamlogin}, steamCountry={steam_country}")
-                        else:
-                            cookies = None
-                    except Exception as e:
-                        self._log(f"Ошибка чтения steam_cookies.json: {e}")
-                        cookies = None
+                if not account.config.steam_shared_secret:
+                    self._log(f"Отсутствует shared_secret для {account.name}")
+                    self._log(f"Для автоматического определения валюты нужен shared_secret")
+                    return
 
-                # Попытка 2: Получаем cookies из steam_client (если не получили из файла)
-                if not cookies:
-                    self._log(f"Файл steam_cookies.json не найден, пробуем получить из сессии аккаунта...")
+                self._log(f"Используем новый метод SteamWalletChecker с 2FA...")
+                self._log(f"  Username: {account.config.steam_username}")
+                self._log(f"  Shared secret: {'***' if account.config.steam_shared_secret else 'NO'}")
 
-                    # Проверяем, залогинен ли аккаунт
-                    if not account.is_logged_in():
-                        self._log(f"Аккаунт {account.name} не залогинен. Попытка входа...")
-                        success = account.login()
-                        if not success:
-                            self._log(f"Не удалось войти в аккаунт {account.name}")
-                            return
+                # Используем SteamWalletBalance для получения баланса и валюты
+                checker = SteamWalletBalance(
+                    username=account.config.steam_username,
+                    password=account.config.steam_password,
+                    shared_secret=account.config.steam_shared_secret
+                )
 
-                    # Получаем cookies из steam_client
-                    steam_client = account.steam_client
-                    if not steam_client or not steam_client._session:
-                        self._log(f"Нет активной сессии Steam для {account.name}")
-                        return
-
-                    # Формируем cookies для SteamMarketScraper
-                    cookies = {}
-                    for cookie in steam_client._session.cookies:
-                        if cookie.name in ['sessionid', 'steamLoginSecure', 'steamCountry']:
-                            cookies[cookie.name] = cookie.value
-
-                    if not cookies.get('sessionid'):
-                        self._log(f"Не найден sessionid в cookies для {account.name}")
-                        return
-
-                    # Логируем cookies для отладки
-                    sessionid_preview = cookies.get('sessionid', '')[:10] + '...' if cookies.get('sessionid') else 'N/A'
-                    has_steamlogin = 'YES' if cookies.get('steamLoginSecure') else 'NO'
-                    steam_country = cookies.get('steamCountry', 'N/A')
-                    self._log(f"Используем cookies из сессии аккаунта")
-                    self._log(f"  sessionid={sessionid_preview}, steamLoginSecure={has_steamlogin}, steamCountry={steam_country}")
-
-                self._log(f"Получение баланса через SteamMarketScraper...")
-
-                # Используем SteamMarketScraper для получения баланса и валюты
-                scraper = SteamMarketScraper(cookies)
-                result = scraper.get_balance()
+                self._log(f"Получение баланса через SteamKit2...")
+                result = checker.get_balance()
 
                 if result['success']:
                     detected_currency = result['currency']
                     balance = result['balance']
+                    balance_usd = result.get('balance_usd', 0)
+                    country_code = result.get('country_code', 'N/A')
 
                     self._log(f"Валюта: {detected_currency}, Баланс: {balance} {detected_currency}")
+                    self._log(f"USD эквивалент: ${balance_usd:.2f}")
+                    self._log(f"Страна: {country_code}")
 
                     # Обновляем валюту в конфигурации аккаунта
                     account.config.currency = detected_currency
 
+                    # ВАЖНО: Сохраняем баланс в аккаунт, чтобы не делать повторные запросы
+                    if not hasattr(account, '_cached_steam_balance'):
+                        account._cached_steam_balance = {}
+                    account._cached_steam_balance = {
+                        'balance': balance,
+                        'currency': detected_currency,
+                        'balance_usd': balance_usd,
+                        'timestamp': time.time()
+                    }
+
                     # Обновляем отображение
                     self.after(0, self._refresh_accounts_list)
+
+                    # Обновляем баланс в GUI
+                    if account.name in self.account_balance_labels:
+                        try:
+                            csgotm_balance = account.get_csgotm_balance()
+                            if detected_currency != 'RUB':
+                                csgotm_converted = currency_converter.convert_from_rub(csgotm_balance, detected_currency)
+                                balance_text = f"💰 Steam: {balance:.2f} {detected_currency} | TM: {csgotm_converted:.2f} {detected_currency} ({csgotm_balance:.2f} RUB)"
+                            else:
+                                balance_text = f"💰 Steam: {balance:.2f} {detected_currency} | TM: {csgotm_balance:.2f} {detected_currency}"
+                            self.after(0, lambda: self.account_balance_labels[account.name].configure(text=balance_text))
+                        except Exception as e:
+                            logger.error(f"Failed to update balance display: {e}")
 
                     # Сохраняем изменения
                     self._save_accounts_config()
                 else:
                     error_msg = result.get('error', 'Unknown error')
                     self._log(f"Не удалось получить баланс: {error_msg}")
+                    self._log(f"Проверьте правильность username, password и shared_secret")
 
             except Exception as e:
                 logger.error(f"Error detecting currency for {account.name}: {e}")
@@ -2969,181 +2938,6 @@ class TradingBotGUI(ctk.CTk):
     # ============================================================
     # НОВЫЕ МЕТОДЫ: Auto Buyer, Auto Scanner, Statistics
     # ============================================================
-
-    def _show_auto_buy_dialog(self):
-        """Показать диалог настроек автоматической покупки."""
-        # Проверяем, что есть включенный аккаунт
-        enabled_accounts = [acc for acc in self.account_manager.accounts if acc.config.enabled]
-
-        if not enabled_accounts:
-            self._log("⚠️ Нет включенных аккаунтов для автопокупки")
-            return
-
-        if not enabled_accounts[0].is_logged_in():
-            self._log("⚠️ Аккаунт не залогинен. Выполните вход сначала.")
-            return
-
-        # Создаём диалог
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("🛒 Настройки Auto Buy")
-        dialog.geometry("500x400")
-        dialog.transient(self)
-        dialog.grab_set()
-
-        # Заголовок
-        header = ctk.CTkLabel(
-            dialog,
-            text="🛒 Автоматическая покупка",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        header.pack(padx=20, pady=20)
-
-        # Контейнер для настроек
-        settings_frame = ctk.CTkFrame(dialog)
-        settings_frame.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-        # Макс. предметов
-        max_items_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        max_items_frame.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(max_items_frame, text="Макс. предметов:", width=150, anchor="w").pack(side="left")
-        max_items_entry = ctk.CTkEntry(max_items_frame, width=100)
-        max_items_entry.insert(0, str(self.bot_config.get('auto_buy_max_items', 10)))
-        max_items_entry.pack(side="left", padx=5)
-
-        # Макс. цена за предмет
-        max_price_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        max_price_frame.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(max_price_frame, text="Макс. цена (₽):", width=150, anchor="w").pack(side="left")
-        max_price_entry = ctk.CTkEntry(max_price_frame, width=100)
-        max_price_entry.insert(0, str(self.bot_config.get('auto_buy_max_price', 1000.0)))
-        max_price_entry.pack(side="left", padx=5)
-
-        # Общий бюджет
-        budget_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        budget_frame.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(budget_frame, text="Общий бюджет (₽):", width=150, anchor="w").pack(side="left")
-        budget_entry = ctk.CTkEntry(budget_frame, width=100)
-        budget_entry.insert(0, str(self.bot_config.get('auto_buy_total_budget', 5000.0)))
-        budget_entry.pack(side="left", padx=5)
-
-        # Мин. профит
-        min_profit_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
-        min_profit_frame.pack(fill="x", padx=15, pady=10)
-
-        ctk.CTkLabel(min_profit_frame, text="Мин. профит (%):", width=150, anchor="w").pack(side="left")
-        min_profit_entry = ctk.CTkEntry(min_profit_frame, width=100)
-        min_profit_entry.insert(0, str(self.bot_config.get('auto_buy_min_profit', 15.0)))
-        min_profit_entry.pack(side="left", padx=5)
-
-        # Информация
-        info_label = ctk.CTkLabel(
-            settings_frame,
-            text="Бот автоматически купит предметы из списка\nс учётом заданных ограничений.",
-            font=ctk.CTkFont(size=11),
-            text_color="gray"
-        )
-        info_label.pack(padx=15, pady=20)
-
-        # Кнопки
-        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        button_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        def start_auto_buy():
-            try:
-                max_items = int(max_items_entry.get())
-                max_price = float(max_price_entry.get())
-                budget = float(budget_entry.get())
-                min_profit = float(min_profit_entry.get())
-
-                # Сохраняем настройки
-                self.bot_config['auto_buy_max_items'] = max_items
-                self.bot_config['auto_buy_max_price'] = max_price
-                self.bot_config['auto_buy_total_budget'] = budget
-                self.bot_config['auto_buy_min_profit'] = min_profit
-                self._save_bot_config()
-
-                dialog.destroy()
-
-                # Запускаем автопокупку
-                self._run_auto_buy(max_items, max_price, budget, min_profit)
-
-            except ValueError:
-                self._log("❌ Неверный формат числа в настройках")
-
-        ctk.CTkButton(
-            button_frame,
-            text="🛒 Запустить покупку",
-            command=start_auto_buy,
-            fg_color="#9B59B6",
-            width=150
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            button_frame,
-            text="❌ Отмена",
-            command=dialog.destroy,
-            fg_color="#95A5A6",
-            width=100
-        ).pack(side="left", padx=5)
-
-    def _run_auto_buy(self, max_items, max_price, budget, min_profit):
-        """Запустить автоматическую покупку."""
-        def buy_thread():
-            try:
-                self._log("🛒 Запуск автоматической покупки...")
-
-                # Получаем включенный аккаунт
-                enabled_accounts = [acc for acc in self.account_manager.accounts if acc.config.enabled]
-                if not enabled_accounts:
-                    self._log("❌ Нет включенных аккаунтов")
-                    return
-
-                account = enabled_accounts[0]
-
-                # Создаём AutoBuyer
-                self.auto_buyer = AutoBuyer(
-                    steam_client=account.steam_client,
-                    db=trades_db,
-                    account_name=account.name
-                )
-
-                # Получаем предметы из БД
-                items = trades_db.get_active_profitable_items(limit=1000)
-
-                if not items:
-                    self._log("⚠️ Нет предметов для покупки")
-                    return
-
-                self._log(f"📊 Найдено {len(items)} предметов. Начинаем покупку...")
-
-                # Запускаем автопокупку
-                stats = self.auto_buyer.auto_buy_from_list(
-                    items=items,
-                    max_items=max_items,
-                    max_price_per_item=max_price,
-                    total_budget=budget,
-                    min_profit_pct=min_profit
-                )
-
-                # Выводим результаты
-                self._log("=" * 50)
-                self._log("📊 РЕЗУЛЬТАТЫ АВТОПОКУПКИ:")
-                self._log(f"   Обработано: {stats['processed']}")
-                self._log(f"   Куплено: {stats['bought']}")
-                self._log(f"   Пропущено: {stats['skipped']}")
-                self._log(f"   Ошибок: {stats['errors']}")
-                self._log(f"   Потрачено: {stats['total_spent']:.2f} ₽")
-                self._log("=" * 50)
-
-            except Exception as e:
-                logger.error(f"Error in auto buy: {e}", exc_info=True)
-                self._log(f"❌ Ошибка автопокупки: {e}")
-
-        thread = threading.Thread(target=buy_thread, daemon=True)
-        thread.start()
 
     def _toggle_auto_scan(self):
         """Переключить автосканирование."""
@@ -3326,56 +3120,6 @@ class TradingBotGUI(ctk.CTk):
                 self._log(f"❌ Ошибка экспорта: {e}")
 
         thread = threading.Thread(target=export_thread, daemon=True)
-        thread.start()
-
-    def _show_confirmations_dialog(self):
-        """Показать диалог подтверждений."""
-        # Проверяем, что есть включенный аккаунт
-        enabled_accounts = [acc for acc in self.account_manager.accounts if acc.config.enabled]
-
-        if not enabled_accounts:
-            self._log("⚠️ Нет включенных аккаунтов")
-            return
-
-        account = enabled_accounts[0]
-
-        if not account.is_logged_in():
-            self._log("⚠️ Аккаунт не залогинен")
-            return
-
-        def confirm_thread():
-            try:
-                from src.confirmations import ConfirmationHandler
-
-                self._log("🔍 Проверка ожидающих подтверждений...")
-
-                handler = ConfirmationHandler(account.steam_client)
-                confirmations = handler.get_confirmations()
-
-                if not confirmations:
-                    self._log("✅ Нет ожидающих подтверждений")
-                    return
-
-                self._log(f"📋 Найдено {len(confirmations)} ожидающих подтверждений:")
-                for conf in confirmations:
-                    self._log(f"  - {conf.description} (ID: {conf.id})")
-
-                self._log("🔄 Автоматическое подтверждение...")
-                results = handler.confirm_all()
-
-                self._log("=" * 50)
-                self._log("📊 РЕЗУЛЬТАТЫ ПОДТВЕРЖДЕНИЯ:")
-                self._log(f"   Market listings: {results['market']}")
-                self._log(f"   Trade offers: {results['trade']}")
-                self._log(f"   Прочие: {results['other']}")
-                self._log(f"   Ошибки: {results['failed']}")
-                self._log("=" * 50)
-
-            except Exception as e:
-                logger.error(f"Error in confirmations: {e}", exc_info=True)
-                self._log(f"❌ Ошибка подтверждения: {e}")
-
-        thread = threading.Thread(target=confirm_thread, daemon=True)
         thread.start()
 
     def _on_closing(self):

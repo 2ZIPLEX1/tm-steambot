@@ -18,6 +18,7 @@ import requests
 from src.logger import get_logger
 from src.steam_client import SteamClient
 from src.csgotm_client import CsgoTmClient
+from src.proxy_manager import ProxyManager
 
 logger = get_logger(__name__)
 
@@ -98,13 +99,23 @@ class Account:
             # Create session with proxy
             self._session = self._create_session_with_proxy()
 
-            # Create Steam client
-            self.steam_client = SteamClient()
+            # Create Steam client with proxy support
+            # Try to get proxy_manager from parent AccountManager if available
+            proxy_manager = None
+            if hasattr(self, '_proxy_manager') and self._proxy_manager:
+                proxy_manager = self._proxy_manager
+                logger.info(f"[{self.name}] Using ProxyManager with {len(proxy_manager.proxies)} proxies")
 
-            # If proxy is set, pass session to steam client
+            self.steam_client = SteamClient(
+                proxy=self.config.proxy,
+                proxy_manager=proxy_manager
+            )
+
+            # If proxy is set and session already created, use it
+            # (for backward compatibility)
             if self.config.proxy and self._session:
-                # Steam client will use this session with proxy
                 self.steam_client._session = self._session
+                self.steam_client._setup_proxy()  # Ensure proxy is configured
 
             # Try to login with account-specific cookie file
             # This allows each account to have its own cookies
@@ -249,20 +260,79 @@ class Account:
             return None
 
 
+def load_proxy_manager_from_file(
+    proxy_file: str = 'proxies.txt',
+    max_requests: int = 15,
+    blacklist_duration: int = 30,
+    cooldown: int = 60
+) -> Optional[ProxyManager]:
+    """
+    Load ProxyManager from proxy file.
+
+    Args:
+        proxy_file: Path to proxy list file
+        max_requests: Max requests per proxy before rotation
+        blacklist_duration: Blacklist duration in minutes
+        cooldown: Cooldown between proxy uses in seconds
+
+    Returns:
+        ProxyManager instance or None if no proxies
+    """
+    proxy_path = Path(proxy_file)
+    if not proxy_path.exists():
+        logger.debug(f"Proxy file not found: {proxy_file}")
+        return None
+
+    proxies = []
+    try:
+        with open(proxy_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith('#'):
+                    continue
+
+                # Auto-add socks5:// if no protocol specified
+                if '://' not in line:
+                    line = f'socks5://{line}'
+
+                proxies.append(line)
+
+        if proxies:
+            logger.info(f"Loaded {len(proxies)} proxies from {proxy_file}")
+            return ProxyManager(
+                proxies=proxies,
+                max_requests_per_proxy=max_requests,
+                blacklist_duration_minutes=blacklist_duration,
+                cooldown_seconds=cooldown
+            )
+        else:
+            logger.debug(f"No proxies found in {proxy_file}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Failed to load proxies: {e}")
+        return None
+
+
 class AccountManager:
     """
     Менеджер для управления несколькими аккаунтами.
     """
 
-    def __init__(self, config_file: str = "accounts.json"):
+    def __init__(self, config_file: str = "accounts.json", proxy_file: str = 'proxies.txt'):
         """
         Initialize account manager.
 
         Args:
             config_file: Path to accounts configuration file
+            proxy_file: Path to proxy list file (optional)
         """
         self.config_file = Path(config_file)
         self.accounts: list[Account] = []
+
+        # Load proxy manager if available
+        self.proxy_manager = load_proxy_manager_from_file(proxy_file)
 
         self._load_accounts()
 
@@ -299,6 +369,9 @@ class AccountManager:
                 )
 
                 account = Account(config)
+                # Pass proxy_manager to account if available
+                if self.proxy_manager:
+                    account._proxy_manager = self.proxy_manager
                 self.accounts.append(account)
 
             logger.info(f"Loaded {len(self.accounts)} account(s)")

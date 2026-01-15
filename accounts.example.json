@@ -1,0 +1,65 @@
+[
+  {
+    "name": "account1",
+    "enabled": true,
+    "currency": "RUB",
+    "steam": {
+      "username": "your_steam_login_1",
+      "password": "your_steam_password_1",
+      "api_key": "your_steam_api_key_1",
+      "shared_secret": "your_shared_secret_base64_1",
+      "identity_secret": "your_identity_secret_base64_1"
+    },
+    "csgotm": {
+      "api_key": "your_csgotm_api_key_1"
+    },
+    "limits": {
+      "max_items": 10,
+      "max_price_per_item": 1500.0,
+      "total_budget": 5000.0
+    },
+    "proxy": "socks5://user:pass@host:port"
+  },
+  {
+    "name": "account2",
+    "enabled": true,
+    "currency": "USD",
+    "steam": {
+      "username": "your_steam_login_2",
+      "password": "your_steam_password_2",
+      "api_key": "your_steam_api_key_2",
+      "shared_secret": "your_shared_secret_base64_2",
+      "identity_secret": "your_identity_secret_base64_2"
+    },
+    "csgotm": {
+      "api_key": "your_csgotm_api_key_2"
+    },
+    "limits": {
+      "max_items": 5,
+      "max_price_per_item": 30.0,
+      "total_budget": 100.0
+    },
+    "proxy": "socks5://user:pass@host:port"
+  },
+  {
+    "name": "account3",
+    "enabled": false,
+    "currency": "EUR",
+    "steam": {
+      "username": "your_steam_login_3",
+      "password": "your_steam_password_3",
+      "api_key": "your_steam_api_key_3",
+      "shared_secret": "your_shared_secret_base64_3",
+      "identity_secret": "your_identity_secret_base64_3"
+    },
+    "csgotm": {
+      "api_key": "your_csgotm_api_key_3"
+    },
+    "limits": {
+      "max_items": 15,
+      "max_price_per_item": 50.0,
+      "total_budget": 500.0
+    },
+    "proxy": null
+  }
+]

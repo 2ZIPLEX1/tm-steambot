@@ -240,16 +240,17 @@ class SteamMarketAPI:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def check_proxy(self, proxy_url: str, timeout: float = 10) -> bool:
+    async def check_proxy(self, proxy_url: str, timeout: float = 10, check_steam_api: bool = True) -> bool:
         """
-        Quick check if proxy is working.
+        Check if proxy is working (basic + Steam API test).
 
         Args:
             proxy_url: Proxy URL to test
             timeout: Timeout in seconds
+            check_steam_api: Also test Steam Market API (checks for 429 errors)
 
         Returns:
-            True if proxy works, False otherwise
+            True if proxy works and NOT rate limited, False otherwise
         """
         try:
             connector = ProxyConnector.from_url(proxy_url)
@@ -257,10 +258,39 @@ class SteamMarketAPI:
                 connector=connector,
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as session:
-                # Quick request to Steam
+                # Test 1: Basic connectivity
                 async with session.get(f"{self.BASE_URL}/") as response:
-                    return response.status == 200
-        except Exception:
+                    if response.status != 200:
+                        logger.debug(f"Proxy failed basic test: status {response.status}")
+                        return False
+
+                # Test 2: Steam Market API (check for rate limit)
+                if check_steam_api:
+                    # Try to get price for a common item
+                    test_item = "AK-47 | Redline (Field-Tested)"
+                    encoded_name = quote(test_item)
+                    api_url = f"{self.BASE_URL}/priceoverview/"
+                    params = {
+                        'appid': self.APP_ID,
+                        'market_hash_name': test_item,
+                        'currency': STEAM_CURRENCY_CODES.get(self.currency, 5)
+                    }
+
+                    async with session.get(api_url, params=params) as response:
+                        if response.status == 429:
+                            logger.debug(f"Proxy has rate limit (429)")
+                            return False
+                        elif response.status != 200:
+                            logger.debug(f"Proxy API test failed: status {response.status}")
+                            return False
+
+                return True
+
+        except asyncio.TimeoutError:
+            logger.debug(f"Proxy timeout")
+            return False
+        except Exception as e:
+            logger.debug(f"Proxy check error: {e}")
             return False
 
     async def check_all_proxies(self) -> list[str]:
@@ -292,17 +322,17 @@ class SteamMarketAPI:
 
         return working
 
-    async def get_price_overview(self, market_hash_name: str) -> PriceOverview:
+    async def get_price_overview(self, market_hash_name: str, max_retries: int = 3) -> PriceOverview:
         """
-        Get price overview for an item.
+        Get price overview for an item (with automatic proxy rotation on 429).
 
         Args:
             market_hash_name: Steam market hash name (e.g., "AK-47 | Redline (Field-Tested)")
+            max_retries: Maximum number of retries with proxy rotation (default: 3)
 
         Returns:
             PriceOverview with lowest_price, median_price, volume
         """
-        session = await self._get_session()
         currency_code = STEAM_CURRENCY_CODES[self.currency]
 
         url = f"{self.BASE_URL}/priceoverview/"
@@ -312,28 +342,47 @@ class SteamMarketAPI:
             "market_hash_name": market_hash_name,
         }
 
-        try:
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    await self._handle_rate_limit(response.status)
-                    logger.error(f"Steam API error: {response.status}")
-                    return PriceOverview(success=False)
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_session()
+                async with session.get(url, params=params) as response:
+                    if response.status == 429:
+                        # Rate limit - rotate proxy and retry
+                        await self._handle_rate_limit(response.status)
+                        logger.warning(f"Rate limit (429) for price_overview, rotating proxy... (attempt {attempt + 1}/{max_retries})")
+                        await self._rotate_proxy(reason="rate_limit")
 
-                data = await response.json()
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2)  # Small delay before retry
+                            continue
+                        else:
+                            logger.error(f"Max retries reached for price_overview: {market_hash_name}")
+                            return PriceOverview(success=False)
 
-                if not data.get("success"):
-                    return PriceOverview(success=False)
+                    elif response.status != 200:
+                        await self._handle_rate_limit(response.status)
+                        logger.error(f"Steam API error: {response.status}")
+                        return PriceOverview(success=False)
 
-                return PriceOverview(
-                    success=True,
-                    lowest_price=parse_steam_price(data.get("lowest_price", "")),
-                    median_price=parse_steam_price(data.get("median_price", "")),
-                    volume=int(data.get("volume", "0").replace(",", "")) if data.get("volume") else None,
-                    currency=self.currency,
-                )
-        except Exception as e:
-            logger.error(f"Failed to get price overview: {e}")
-            return PriceOverview(success=False)
+                    data = await response.json()
+
+                    if not data.get("success"):
+                        return PriceOverview(success=False)
+
+                    return PriceOverview(
+                        success=True,
+                        lowest_price=parse_steam_price(data.get("lowest_price", "")),
+                        median_price=parse_steam_price(data.get("median_price", "")),
+                        volume=int(data.get("volume", "0").replace(",", "")) if data.get("volume") else None,
+                        currency=self.currency,
+                    )
+            except Exception as e:
+                logger.error(f"Failed to get price overview (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+
+        return PriceOverview(success=False)
 
     async def _get_item_nameid(self, market_hash_name: str) -> Optional[int]:
         """
@@ -378,12 +427,13 @@ class SteamMarketAPI:
             logger.error(f"Failed to get item_nameid: {e}")
             return None
 
-    async def get_buy_orders(self, market_hash_name: str) -> BuyOrderInfo:
+    async def get_buy_orders(self, market_hash_name: str, max_retries: int = 3) -> BuyOrderInfo:
         """
-        Get buy order information for an item.
+        Get buy order information for an item (with automatic proxy rotation on 429).
 
         Args:
             market_hash_name: Steam market hash name
+            max_retries: Maximum number of retries with proxy rotation (default: 3)
 
         Returns:
             BuyOrderInfo with highest_buy_order and other order data
@@ -393,7 +443,6 @@ class SteamMarketAPI:
         if item_nameid is None:
             return BuyOrderInfo(success=False)
 
-        session = await self._get_session()
         currency_code = STEAM_CURRENCY_CODES[self.currency]
 
         url = f"{self.BASE_URL}/itemordershistogram"
@@ -405,39 +454,53 @@ class SteamMarketAPI:
             "two_factor": 0,
         }
 
-        try:
-            async with session.get(url, params=params) as response:
-                if response.status == 429:
-                    await self._handle_rate_limit(response.status)
-                    logger.warning(f"Rate limit hit for orders histogram, waiting before retry...")
-                    await asyncio.sleep(5)  # Wait before retry
-                    return BuyOrderInfo(success=False)
-                elif response.status != 200:
-                    logger.error(f"Orders histogram error: {response.status}")
-                    return BuyOrderInfo(success=False)
+        for attempt in range(max_retries):
+            try:
+                session = await self._get_session()
+                async with session.get(url, params=params) as response:
+                    if response.status == 429:
+                        # Rate limit - rotate proxy and retry
+                        await self._handle_rate_limit(response.status)
+                        logger.warning(f"Rate limit (429) for buy_orders, rotating proxy... (attempt {attempt + 1}/{max_retries})")
+                        await self._rotate_proxy(reason="rate_limit")
 
-                data = await response.json()
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2)  # Small delay before retry
+                            continue
+                        else:
+                            logger.error(f"Max retries reached for buy_orders: {market_hash_name}")
+                            return BuyOrderInfo(success=False)
 
-                if not data.get("success"):
-                    return BuyOrderInfo(success=False)
+                    elif response.status != 200:
+                        logger.error(f"Orders histogram error: {response.status}")
+                        return BuyOrderInfo(success=False)
 
-                # highest_buy_order and lowest_sell_order are in cents
-                highest_buy = data.get("highest_buy_order")
-                lowest_sell = data.get("lowest_sell_order")
-                buy_graph = data.get("buy_order_graph", [])
+                    data = await response.json()
 
-                return BuyOrderInfo(
-                    success=True,
-                    highest_buy_order=int(highest_buy) / 100 if highest_buy else None,
-                    lowest_sell_order=int(lowest_sell) / 100 if lowest_sell else None,
-                    buy_order_count=len(buy_graph),
-                    sell_order_count=len(data.get("sell_order_graph", [])),
-                    buy_order_graph=buy_graph,
-                )
+                    if not data.get("success"):
+                        return BuyOrderInfo(success=False)
 
-        except Exception as e:
-            logger.error(f"Failed to get buy orders: {e}")
-            return BuyOrderInfo(success=False)
+                    # highest_buy_order and lowest_sell_order are in cents
+                    highest_buy = data.get("highest_buy_order")
+                    lowest_sell = data.get("lowest_sell_order")
+                    buy_graph = data.get("buy_order_graph", [])
+
+                    return BuyOrderInfo(
+                        success=True,
+                        highest_buy_order=int(highest_buy) / 100 if highest_buy else None,
+                        lowest_sell_order=int(lowest_sell) / 100 if lowest_sell else None,
+                        buy_order_count=len(buy_graph),
+                        sell_order_count=len(data.get("sell_order_graph", [])),
+                        buy_order_graph=buy_graph,
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to get buy orders (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+
+        return BuyOrderInfo(success=False)
 
     async def get_price_history(self, market_hash_name: str, days: int = 7) -> PriceHistory:
         """
