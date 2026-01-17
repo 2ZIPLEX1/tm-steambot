@@ -1,17 +1,11 @@
 """
-Steam client using ValvePython/steam library with HTTP requests.
+Steam client using steampy library.
 
-This implementation replaces steampy with a more reliable approach:
-- Uses ValvePython/steam for authentication (supports new Steam API)
-- Makes direct HTTP requests to Steam Market API
-- Compatible with the same credentials as steampy
-
-Based on the Node.js buyOrders.js implementation.
+This implementation uses steampy for authentication and market operations.
 """
 
 import json
 import time
-import re
 import base64
 from dataclasses import dataclass
 from decimal import Decimal
@@ -19,10 +13,9 @@ from typing import Optional
 from pathlib import Path
 
 import requests
-import hmac
-import hashlib
-from steam.webauth import WebAuth
-from steam.guard import generate_twofactor_code
+
+from steampy.client import SteamClient as SteampyClient
+from steampy.models import GameOptions, Currency
 
 from config import settings
 from src.logger import get_logger
@@ -76,8 +69,7 @@ class SteamClientError(Exception):
 
 class SteamClient:
     """
-    Steam Market client using ValvePython/steam for authentication
-    and direct HTTP requests for market operations.
+    Steam Market client using steampy library.
 
     Handles:
     - Authentication with Steam Guard (shared_secret for 2FA)
@@ -104,11 +96,8 @@ class SteamClient:
             proxy: Single proxy URL (socks5://user:pass@host:port)
             proxy_manager: ProxyManager instance for automatic proxy rotation
         """
-        self._session: Optional[requests.Session] = None
-        self._sessionid: Optional[str] = None
-        self._last_request_time = 0.0
+        self._client: Optional[SteampyClient] = None
         self._logged_in = False
-        self._use_manual_cookies = False
         self._cookie_file: str = "steam_cookies.txt"  # Default cookie file
 
         # Proxy support
@@ -116,108 +105,7 @@ class SteamClient:
         self._proxy_manager = proxy_manager
         self._current_proxy = proxy  # Track current proxy
 
-    def load_cookies_from_file(self, cookie_file: str = "steam_cookies.txt") -> bool:
-        """
-        Load cookies from file instead of using WebAuth login.
-        This is useful when WebAuth shows captcha or rate limits.
 
-        Cookie file format:
-        sessionid=...
-        steamLoginSecure=...
-        steamCountry=...
-        timezoneOffset=...
-
-        Args:
-            cookie_file: Path to cookie file
-
-        Returns:
-            True if cookies loaded successfully
-        """
-        cookie_path = Path(cookie_file)
-        if not cookie_path.exists():
-            logger.warning(f"Cookie file not found: {cookie_file}")
-            return False
-
-        logger.info(f"Loading cookies from {cookie_file}...")
-
-        # Create session
-        self._session = requests.Session()
-
-        # Set browser-like headers
-        self._session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-        })
-
-        # Setup proxy if provided
-        self._setup_proxy()
-
-        # Read cookies from file
-        cookies = {}
-        with open(cookie_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if '=' in line and not line.startswith('#'):
-                    key, value = line.split('=', 1)
-                    cookies[key.strip()] = value.strip()
-
-        if not cookies:
-            logger.error("No cookies found in file")
-            return False
-
-        logger.info(f"Loaded cookies: {list(cookies.keys())}")
-
-        # Set cookies for both Steam domains
-        for name, value in cookies.items():
-            self._session.cookies.set(name, value, domain='store.steampowered.com', path='/')
-            self._session.cookies.set(name, value, domain='.steampowered.com', path='/')
-            self._session.cookies.set(name, value, domain='steamcommunity.com', path='/')
-            self._session.cookies.set(name, value, domain='.steamcommunity.com', path='/')
-
-        # Extract sessionid
-        if 'sessionid' in cookies:
-            self._sessionid = cookies['sessionid']
-        else:
-            logger.error("sessionid not found in cookies")
-            return False
-
-        # Save identity_secret and shared_secret for confirmations
-        if not hasattr(self, '_identity_secret') or not self._identity_secret:
-            identity_secret = settings.steam_identity_secret
-            if identity_secret:
-                self._identity_secret = identity_secret
-                logger.debug("identity_secret saved for auto-confirmations")
-
-        if not hasattr(self, '_shared_secret') or not self._shared_secret:
-            shared_secret = settings.steam_shared_secret
-            if shared_secret:
-                self._shared_secret = shared_secret
-                logger.debug("shared_secret saved for 2FA codes")
-
-        # Extract SteamID from steamLoginSecure cookie
-        if 'steamLoginSecure' in cookies and (not hasattr(self, '_steamid') or not self._steamid):
-            # steamLoginSecure format: "steamid||token" or "steamid%7C%7Ctoken" (URL-encoded)
-            cookie_value = cookies['steamLoginSecure']
-            # Try both separators
-            if '%7C%7C' in cookie_value:
-                parts = cookie_value.split('%7C%7C')
-            elif '||' in cookie_value:
-                parts = cookie_value.split('||')
-            else:
-                parts = []
-
-            if len(parts) >= 1 and parts[0]:
-                self._steamid = parts[0]
-                logger.debug(f"SteamID extracted from cookie: {self._steamid}")
-
-        self._logged_in = True
-        self._use_manual_cookies = True
-        logger.info("✅ Cookies loaded successfully!")
-
-        return True
 
     def _setup_proxy(self):
         """Setup proxy for session."""
@@ -276,16 +164,36 @@ class SteamClient:
         logger.info(f"🔄 Proxy rotated: {old_proxy} -> {next_proxy} (reason: {reason})")
         return True
 
+    def _load_cookies_from_file(self, cookie_file: str) -> Optional[dict]:
+        """
+        Load cookies from file for steampy.
+
+        Returns:
+            Dict of cookie name to value, or None if failed
+        """
+        cookie_path = Path(cookie_file)
+        if not cookie_path.exists():
+            return None
+
+        cookies = {}
+        with open(cookie_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    cookies[key.strip()] = value.strip()
+
+        return cookies if cookies else None
+
     def _save_cookies_to_file(self, cookie_file: str = "steam_cookies.txt"):
         """
         Save current session cookies to file for future use.
-        This allows reusing the session without WebAuth login (avoids captcha).
 
         Args:
             cookie_file: Path to save cookies
         """
-        if not self._session:
-            logger.warning("No session to save cookies from")
+        if not self._client or not hasattr(self._client, '_session'):
+            logger.warning("No client session to save cookies from")
             return
 
         try:
@@ -295,7 +203,7 @@ class SteamClient:
             important_cookies = ['sessionid', 'steamLoginSecure', 'steamCountry', 'timezoneOffset']
 
             cookies_to_save = {}
-            for cookie in self._session.cookies:
+            for cookie in self._client._session.cookies:
                 if cookie.name in important_cookies:
                     cookies_to_save[cookie.name] = cookie.value
 
@@ -309,7 +217,6 @@ class SteamClient:
                     f.write(f"{name}={value}\n")
 
             logger.info(f"💾 Saved {len(cookies_to_save)} cookies to {cookie_file}")
-            logger.debug(f"Saved cookies: {list(cookies_to_save.keys())}")
 
         except Exception as e:
             logger.error(f"Failed to save cookies: {e}")
@@ -368,25 +275,25 @@ class SteamClient:
         username: Optional[str] = None,
         password: Optional[str] = None,
         shared_secret: Optional[str] = None,
+        identity_secret: Optional[str] = None,
+        api_key: Optional[str] = None,
         cookie_file: Optional[str] = None,
     ) -> bool:
         """
-        Login to Steam.
-
-        Priority:
-        1. Try loading cookies from file (avoids captcha)
-        2. Fall back to WebAuth login with 2FA
+        Login to Steam using steampy.
 
         Args:
-            username: Steam username (uses settings if not provided)
-            password: Steam password (uses settings if not provided)
-            shared_secret: Base64-encoded shared secret (uses settings if not provided)
-            cookie_file: Path to cookie file (uses 'steam_cookies.txt' if not provided)
+            username: Steam username
+            password: Steam password
+            shared_secret: Steam shared secret for 2FA
+            identity_secret: Steam identity secret for confirmations
+            api_key: Steam API key
+            cookie_file: Path to cookie file
 
         Returns:
             True if login successful
         """
-        if self._logged_in and self._session:
+        if self._logged_in and self._client:
             logger.info("Already logged in")
             return True
 
@@ -394,196 +301,81 @@ class SteamClient:
         username = username or settings.steam_username
         password = password or settings.steam_password
         shared_secret = shared_secret or settings.steam_shared_secret
+        identity_secret = identity_secret or settings.steam_identity_secret
+        api_key = api_key or settings.steam_api_key
         cookie_file = cookie_file or "steam_cookies.txt"
 
-        # Save cookie file path for later use
+        # Save cookie file path
         self._cookie_file = cookie_file
 
-        # Try cookies first (to avoid captcha/rate limits)
-        if Path(cookie_file).exists():
-            logger.info(f"Found {cookie_file}, trying cookie-based login...")
-            if self.load_cookies_from_file(cookie_file):
-                return True
-            else:
-                logger.warning("Cookie login failed, falling back to WebAuth...")
+        # Prepare steam_guard
+        steam_guard = None
+        if shared_secret or identity_secret:
+            steam_guard = {}
+            if shared_secret:
+                steam_guard['shared_secret'] = shared_secret
+            if identity_secret:
+                steam_guard['identity_secret'] = identity_secret
+            steam_guard = json.dumps(steam_guard)
 
-        # Fall back to WebAuth login
+        # Prepare login_cookies
+        login_cookies = None
+        if Path(cookie_file).exists():
+            logger.info(f"Loading cookies from {cookie_file}")
+            login_cookies = self._load_cookies_from_file(cookie_file)
+
+        # Prepare proxies
+        proxies = None
+        if self._proxy:
+            proxies = {'http': self._proxy, 'https': self._proxy}
 
         try:
             logger.info(f"Logging in as {username}...")
 
-            # Generate 2FA code from shared_secret
-            # shared_secret in .env is base64-encoded, so decode it first
-            try:
-                shared_secret_bytes = base64.b64decode(shared_secret)
-                twofactor_code = generate_twofactor_code(shared_secret_bytes)
-                logger.info(f"Generated 2FA code: {twofactor_code} (length: {len(twofactor_code)})")
-            except Exception as e:
-                raise SteamClientError(
-                    f"Failed to generate 2FA code. "
-                    f"Check that STEAM_SHARED_SECRET is valid base64: {e}"
-                )
+            # Create steampy client
+            self._client = SteampyClient(
+                api_key=api_key,
+                username=username,
+                password=password,
+                steam_guard=steam_guard,
+                login_cookies=login_cookies,
+                proxies=proxies
+            )
 
-            # Create WebAuth instance
-            wa = WebAuth(username)
-            logger.info(f"WebAuth instance created for user: {username}")
-
-            # Attempt login with 2FA
-            # Try first without 2FA to get the RSA key and session
-            logger.info("Step 1: Initial login attempt...")
-            try:
-                self._session = wa.login(password=password)
-                logger.info("Login successful! Session obtained.")
-            except Exception as login_error:
-                logger.debug(f"Initial login raised: {type(login_error).__name__}")
-
-                # Import the exception class
-                from steam.webauth import TwoFactorCodeRequired
-
-                # Check for rate limiting (HTTP 429)
-                if isinstance(login_error, TypeError) and "'NoneType' object is not subscriptable" in str(login_error):
-                    raise SteamClientError(
-                        "Steam rate limit exceeded (HTTP 429). "
-                        "Too many login attempts. Please wait 5-10 minutes before trying again."
-                    )
-
-                # If 2FA is required, retry with the code
-                if isinstance(login_error, TwoFactorCodeRequired):
-                    logger.info(f"2FA required. Retrying with code: {twofactor_code}")
-                    try:
-                        self._session = wa.login(
-                            password=password,
-                            twofactor_code=twofactor_code
-                        )
-                        logger.info("Login with 2FA successful! Session obtained.")
-                    except KeyError as key_err:
-                        # Handle the 'transfer_parameters' KeyError from Issue #456
-                        # https://github.com/ValvePython/steam/issues/456
-                        if 'transfer_parameters' in str(key_err):
-                            logger.warning(
-                                "Encountered 'transfer_parameters' KeyError. "
-                                "This is a known issue in steam library, but login was successful."
-                            )
-                            # The session is already set in wa object, we can use it
-                            # even though _finalize_login failed
-                            if hasattr(wa, 'session') and wa.session:
-                                self._session = wa.session
-                                logger.info("Using session from WebAuth object")
-                            else:
-                                raise SteamClientError(
-                                    "Login succeeded but couldn't get session. "
-                                    "This is a known issue with steam library. "
-                                    "Try updating: pip install --upgrade steam"
-                                )
-                        else:
-                            raise
-                    except TwoFactorCodeRequired as e:
-                        raise SteamClientError(
-                            f"2FA code rejected by Steam. "
-                            f"Code used: {twofactor_code}. "
-                            f"Please verify your STEAM_SHARED_SECRET is correct."
-                        )
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if "incorrect login" in error_msg or "invalid" in error_msg:
-                            raise SteamClientError("Invalid Steam credentials")
-                        elif "too many login failures" in error_msg:
-                            raise SteamClientError(
-                                "Too many login failures. Wait a few minutes and try again."
-                            )
-                        else:
-                            raise SteamClientError(f"Login with 2FA failed: {e}")
-                else:
-                    # Not a 2FA error, re-raise
-                    error_msg = str(login_error).lower()
-                    if "incorrect login" in error_msg or "invalid" in error_msg:
-                        raise SteamClientError("Invalid Steam credentials")
-                    elif "too many login failures" in error_msg:
-                        raise SteamClientError(
-                            "Too many login failures. Wait a few minutes and try again."
-                        )
-                    else:
-                        raise SteamClientError(f"Login failed: {login_error}")
-
-            # Get sessionid from cookies
-            for cookie in self._session.cookies:
-                if cookie.name == 'sessionid':
-                    self._sessionid = cookie.value
-                    break
-
-            if not self._sessionid:
-                raise SteamClientError("Failed to get sessionid from cookies")
-
-            # Debug: log all cookies after login
-            logger.debug("Cookies after login:")
-            for cookie in self._session.cookies:
-                logger.debug(f"  {cookie.name}: {cookie.value[:30]}... (domain: {cookie.domain}, path: {cookie.path})")
+            # Login
+            self._client.login()
 
             self._logged_in = True
             logger.info("✅ Successfully logged in to Steam!")
-            logger.debug(f"SessionID: {self._sessionid[:8]}...")
 
-            # Save identity_secret and shared_secret for confirmations (if not already saved)
-            if not hasattr(self, '_identity_secret') or not self._identity_secret:
-                identity_secret = settings.steam_identity_secret
-                if identity_secret:
-                    self._identity_secret = identity_secret
-                    logger.debug("identity_secret saved for auto-confirmations")
-
-            if not hasattr(self, '_shared_secret') or not self._shared_secret:
-                shared_secret = settings.steam_shared_secret
-                if shared_secret:
-                    self._shared_secret = shared_secret
-                    logger.debug("shared_secret saved for 2FA codes")
-
-            # Get SteamID from session if available
-            if not hasattr(self, '_steamid') or not self._steamid:
-                # Try to get steamid from cookies or session
-                for cookie in self._session.cookies:
-                    if cookie.name == 'steamLoginSecure':
-                        # steamLoginSecure format: "steamid||token" or "steamid%7C%7Ctoken" (URL-encoded)
-                        cookie_value = cookie.value
-                        # Try both separators
-                        if '%7C%7C' in cookie_value:
-                            parts = cookie_value.split('%7C%7C')
-                        elif '||' in cookie_value:
-                            parts = cookie_value.split('||')
-                        else:
-                            parts = []
-
-                        if len(parts) >= 1 and parts[0]:
-                            self._steamid = parts[0]
-                            logger.debug(f"SteamID extracted from cookie: {self._steamid}")
-                            break
-
-            # Auto-save cookies for future use (to avoid captcha/rate limits)
-            self._save_cookies_to_file(cookie_file=self._cookie_file)
+            # Save cookies after login
+            self._save_cookies_to_file(cookie_file)
 
             return True
 
-        except SteamClientError:
-            raise
         except Exception as e:
             logger.error(f"Login failed: {e}")
-            logger.debug(f"Login error details: {type(e).__name__}: {e}")
             raise SteamClientError(f"Login failed: {e}")
 
     def logout(self):
         """Logout from Steam."""
-        if self._session:
+        if self._client:
             try:
-                self._session.close()
+                self._client.logout()
             except Exception:
                 pass
-            self._session = None
-            self._sessionid = None
+            self._client = None
             self._logged_in = False
             logger.info("Logged out from Steam")
 
     def ensure_logged_in(self):
         """Ensure client is logged in."""
-        if not self._logged_in or not self._session:
+        if not self._logged_in or not self._client:
             self.login()
+
+    def is_logged_in(self) -> bool:
+        """Check if logged in."""
+        return self._logged_in and self._client is not None
 
     def get_steamid(self) -> Optional[str]:
         """
@@ -594,14 +386,12 @@ class SteamClient:
         Returns:
             Steam ID64 as string, or None if not found
         """
-        self.ensure_logged_in()
+        if not self._client:
+            return None
 
         try:
-            # Debug: list all cookies
-            cookie_names = [c.name for c in self._session.cookies]
-            logger.debug(f"Available cookies: {cookie_names}")
-
-            for cookie in self._session.cookies:
+            # Get cookies from steampy session
+            for cookie in self._client._session.cookies:
                 if cookie.name == 'steamLoginSecure':
                     # Cookie format: steamid||token or steamid%7C%7Ctoken (URL-encoded)
                     cookie_value = cookie.value
@@ -686,53 +476,35 @@ class SteamClient:
 
     def get_wallet_balance(self) -> WalletInfo:
         """
-        Get current wallet balance.
+        Get current wallet balance using steampy.
 
         Returns:
             WalletInfo with balance and currency
         """
-        self.ensure_logged_in()
+        if not self._client:
+            raise SteamClientError("Not logged in")
 
         try:
-            # Method 1: Try using Steam API endpoint for wallet info
-            # This is more reliable than HTML parsing
-            logger.debug("Attempting to get wallet balance from Steam API...")
+            balance = self._client.get_wallet_balance()
+            # steampy returns Decimal or str
+            if isinstance(balance, str):
+                balance = Decimal(balance)
 
-            try:
-                url = f"{self.BASE_URL}/steamguard/getjson"
-                response = self._retry_on_error(self._make_request, 'GET', url)
+            # For simplicity, assume RUB, but can be improved
+            currency_code = "RUB"  # Default, can parse from response if needed
+            currency = 5  # RUB code
 
-                # Check if response is JSON
-                if 'application/json' in response.headers.get('content-type', ''):
-                    data = response.json()
+            logger.info(f"✅ Wallet balance: {balance} {currency_code}")
 
-                    if 'wallet_balance' in data:
-                        balance_cents = int(data.get("wallet_balance", 0))
-                        balance = balance_cents / 100.0
-                        currency = data.get("wallet_currency", 1)
+            return WalletInfo(
+                balance=float(balance),
+                currency=currency,
+                currency_code=currency_code
+            )
 
-                        currency_map = {
-                            1: "USD", 2: "GBP", 3: "EUR", 4: "CHF", 5: "RUB",
-                            6: "PLN", 7: "BRL", 8: "JPY", 9: "NOK", 10: "IDR",
-                            11: "MYR", 12: "PHP", 13: "SGD", 14: "THB", 15: "VND",
-                            16: "KRW", 17: "TRY", 18: "UAH", 19: "MXN", 20: "CAD",
-                            21: "AUD", 22: "NZD", 23: "CNY", 24: "INR", 25: "CLP",
-                            26: "PEN", 27: "COP", 28: "ZAR", 29: "HKD", 30: "TWD",
-                            31: "SAR", 32: "AED", 33: "SEK", 34: "ARS", 35: "ILS",
-                            36: "BYN", 37: "KZT", 38: "KWD", 39: "QAR", 40: "CRC",
-                            41: "UYU",
-                        }
-                        currency_code = currency_map.get(currency, "USD")
-
-                        logger.info(f"✅ Wallet balance (API): {balance:.2f} {currency_code}")
-
-                        return WalletInfo(
-                            balance=balance,
-                            currency=currency,
-                            currency_code=currency_code
-                        )
-            except Exception as api_error:
-                logger.debug(f"API method failed: {api_error}, falling back to HTML parsing")
+        except Exception as e:
+            logger.error(f"Failed to get wallet balance: {e}")
+            raise SteamClientError(f"Failed to get wallet balance: {e}")
 
             # Method 2: Try account page first (often more reliable)
             import re
@@ -999,7 +771,7 @@ class SteamClient:
         currency_code: Optional[int] = None
     ) -> BuyOrderResult:
         """
-        Create a buy order on Steam Market.
+        Create a buy order on Steam Market using steampy.
 
         Args:
             market_hash_name: Item's market hash name
@@ -1010,175 +782,38 @@ class SteamClient:
         Returns:
             BuyOrderResult with order ID if successful
         """
-        self.ensure_logged_in()
+        if not self._client:
+            raise SteamClientError("Not logged in")
 
         # Get wallet currency if not specified
         if currency_code is None:
             wallet_info = self.get_wallet_balance()
             currency_code = wallet_info.currency
 
-        price_cents = int(price * 100)
-
         try:
             currency_symbol = self._get_currency_symbol(currency_code)
             logger.info(f"Creating buy order: {market_hash_name} @ {price:.2f} {currency_symbol} x{quantity}")
 
-            url = f"{self.MARKET_URL}/createbuyorder/"
+            # Convert currency code to Currency enum
+            currency = Currency(currency_code)
 
-            # Steam requires billing_state and save_my_address for Russian region
-            form_data = {
-                'sessionid': self._sessionid,
-                'currency': currency_code,
-                'appid': CS2_APPID,
-                'market_hash_name': market_hash_name,
-                'price_total': price_cents * quantity,  # Total price for all items
-                'quantity': quantity,
-                'billing_state': '',
-                'save_my_address': '0'
-            }
+            # Create buy order using steampy
+            response = self._client.market.create_buy_order(
+                market_name=market_hash_name,
+                price_single_item=str(price),
+                quantity=quantity,
+                game=GameOptions.CS,
+                currency=currency
+            )
 
-            # Add proper headers with Referer
-            from urllib.parse import quote
-            encoded_name = quote(market_hash_name)
-            referer = f"{self.MARKET_URL}/listings/{CS2_APPID}/{encoded_name}"
-
-            headers = {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'Accept': '*/*',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Referer': referer,
-                'Origin': 'https://steamcommunity.com'
-            }
-
-            logger.debug(f"Buy order params: currency={currency_code}, price_total={price_cents * quantity}, qty={quantity}")
-
-            # Make request without raise_for_status() because Steam returns 406 for success:22
-            self.ensure_logged_in()
-            headers_combined = headers.copy()
-            headers_combined.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
-
-            response = self._session.post(url, headers=headers_combined, data=form_data)
-
-            # Log response details for debugging
-            logger.debug(f"Response status: {response.status_code}")
-            logger.debug(f"Response headers: {dict(response.headers)}")
-
-            # Parse JSON response (even if status is 406)
-            try:
-                result = response.json()
-            except Exception as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.error(f"Response text: {response.text}")
-                response.raise_for_status()  # Raise the original error
-                return BuyOrderResult(success=False, message=f"Invalid response: {e}")
-
-            # Check for success
-            if result.get('success') in [1, True, '1']:
-                order_id = str(result.get('buy_orderid', 'unknown'))
+            if 'buy_orderid' in response:
+                order_id = response['buy_orderid']
                 logger.info(f"✅ Buy order created: {order_id}")
                 return BuyOrderResult(success=True, order_id=order_id)
-
-            # Handle success:22 (needs mobile confirmation)
-            elif result.get('success') == 22:
-                if result.get('need_confirmation'):
-                    confirmation_id = result.get('confirmation', {}).get('confirmation_id')
-                    logger.warning(f"⚠️ Order created but needs mobile confirmation: {confirmation_id}")
-
-                    # Check if we have identity_secret and steamid for auto-confirmation
-                    if not hasattr(self, '_identity_secret') or not self._identity_secret:
-                        logger.warning("identity_secret not set, cannot auto-confirm")
-                        return BuyOrderResult(success=False, message="needs-mobile-confirmation-no-secret")
-
-                    if not hasattr(self, '_steamid') or not self._steamid:
-                        logger.warning("steamid not set, cannot auto-confirm")
-                        return BuyOrderResult(success=False, message="needs-mobile-confirmation-no-steamid")
-
-                    # Try to confirm via Steam Guard Mobile Confirmations
-                    logger.info("Attempting to auto-confirm via Steam Guard...")
-                    # Reduce initial delay - confirmations appear quickly but expire fast
-                    logger.debug("Waiting 2 seconds for confirmation to appear in Steam's system...")
-                    time.sleep(2)  # Wait for confirmation to appear in Steam's system
-
-                    try:
-                        # Retry logic: try up to 3 times with increasing delays
-                        max_retries = 3
-                        confirmed_count = 0
-
-                        for retry in range(max_retries):
-                            # Use built-in confirmation method
-                            confirmed_count = self.confirm_all_market_transactions(
-                                identity_secret=self._identity_secret,
-                                steamid=self._steamid
-                            )
-
-                            if confirmed_count > 0:
-                                break  # Success!
-
-                            # No confirmations found yet
-                            if retry < max_retries - 1:
-                                wait_time = 3 + (retry * 2)  # 3s, 5s, 7s
-                                logger.debug(f"No confirmations found (attempt {retry+1}/{max_retries}), waiting {wait_time}s...")
-                                time.sleep(wait_time)
-
-                        if confirmed_count > 0:
-                            logger.info(f"✅ Confirmed {confirmed_count} market transaction(s)")
-                            time.sleep(1)
-                            # Verify order was created
-                            orders = self.get_buy_orders()
-                            for order in orders:
-                                if order['item_name'] == market_hash_name:
-                                    return BuyOrderResult(success=True, order_id=order.get('id', 'confirmed'))
-                            return BuyOrderResult(success=True, message="confirmed-but-not-found-in-list")
-                        else:
-                            logger.warning("❌ Auto-confirmation failed - confirmations endpoint returned 404")
-                            logger.warning("📱 Please confirm the order manually in Steam Mobile app!")
-                            logger.info(f"Order created with confirmation_id: {confirmation_id}")
-                            # Return success=True with needs-manual-confirmation flag
-                            # This allows bot to continue and user can confirm manually
-                            return BuyOrderResult(
-                                success=True,
-                                order_id=confirmation_id,
-                                message="needs-manual-confirmation"
-                            )
-
-                    except Exception as e:
-                        logger.error(f"Failed to auto-confirm order: {e}")
-                        import traceback
-                        logger.debug(traceback.format_exc())
-                        return BuyOrderResult(success=False, message=f"confirmation-error: {str(e)}")
-                else:
-                    message = result.get('message', 'Unknown confirmation error')
-                    return BuyOrderResult(success=False, message=message)
-
-            # Handle success:42 (order created but no ID returned)
-            elif result.get('success') == 42:
-                logger.warning("Steam returned success:42 - verifying order...")
-                # Verify order was created by checking active orders
-                orders = self.get_buy_orders()
-                for order in orders:
-                    if order['item_name'] == market_hash_name:
-                        logger.info("✅ Order confirmed via getbuyorders")
-                        return BuyOrderResult(success=True, message="confirmed-via-list")
-
-                message = "Order may not have been created (success:42)"
-                logger.warning(message)
-                return BuyOrderResult(success=False, message=message)
-
             else:
-                message = result.get('message', 'Unknown error')
-                logger.warning(f"Buy order failed: {message}")
-                logger.debug(f"Full response: {result}")
-                return BuyOrderResult(success=False, message=message)
+                logger.error(f"Failed to create buy order: {response}")
+                return BuyOrderResult(success=False, message=str(response))
 
-        except requests.exceptions.HTTPError as e:
-            # Log full error details for HTTP errors
-            logger.error(f"HTTP error creating buy order: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response text: {e.response.text[:500]}")
-            return BuyOrderResult(success=False, message=str(e))
         except Exception as e:
             logger.error(f"Failed to create buy order: {e}")
             return BuyOrderResult(success=False, message=str(e))
@@ -1194,9 +829,6 @@ class SteamClient:
         Returns:
             Dict with highest_buy_order, lowest_sell_order, and order graphs
         """
-        # NOTE: This is a public API, no login required!
-        # Only need login if we want user-specific currency
-
         try:
             # Get item_nameid if not provided
             if item_nameid is None:
@@ -1205,7 +837,7 @@ class SteamClient:
                 encoded_name = quote(market_hash_name)
                 listing_url = f"{self.MARKET_URL}/listings/{CS2_APPID}/{encoded_name}"
 
-                response = self._retry_on_error(self._make_public_request, 'GET', listing_url)
+                response = requests.get(listing_url)
                 html = response.text
 
                 # Extract item_nameid from JavaScript
@@ -1237,7 +869,7 @@ class SteamClient:
                 'two_factor': 0,
             }
 
-            response = self._retry_on_error(self._make_public_request, 'GET', url, params=params)
+            response = requests.get(url, params=params)
             data = response.json()
 
             if not data.get('success'):

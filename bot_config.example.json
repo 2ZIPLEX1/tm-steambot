@@ -1,7 +1,0 @@
-{
-  "min_profit_pct": 5.0,
-  "cycle_interval_minutes": 5,
-  "bottm_db_path": "data/main.db",
-  "auto_refresh": true,
-  "debug_mode": false
-}

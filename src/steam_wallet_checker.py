@@ -39,6 +39,8 @@ class SteamWalletBalance:
         username: Optional[str] = None,
         password: Optional[str] = None,
         shared_secret: Optional[str] = None,
+        identity_secret: Optional[str] = None,
+        steamid: Optional[str] = None,
         config_path: Optional[str] = None,
         exe_path: Optional[str] = None
     ):
@@ -49,12 +51,16 @@ class SteamWalletBalance:
             username: Steam логин
             password: Steam пароль
             shared_secret: Shared secret для 2FA
+            identity_secret: Identity secret для confirmations
+            steamid: Steam ID64
             config_path: Путь к конфигу steam_account.json
             exe_path: Путь к exe файлу SteamWalletChecker
         """
         self.username = username
         self.password = password
         self.shared_secret = shared_secret
+        self.identity_secret = identity_secret
+        self.steamid = steamid
         self.config_path = config_path
 
         # Инициализируем checker
@@ -112,7 +118,9 @@ class SteamWalletBalance:
                 wallet_data = self.checker.check_wallet(
                     username=self.username,
                     password=self.password,
-                    shared_secret=self.shared_secret
+                    shared_secret=self.shared_secret,
+                    identity_secret=self.identity_secret,
+                    steamid=self.steamid
                 )
             else:
                 return {

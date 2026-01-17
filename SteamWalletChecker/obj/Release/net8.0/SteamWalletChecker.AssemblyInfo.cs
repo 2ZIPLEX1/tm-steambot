@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SteamWalletChecker")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f567112ad576acb18874c8bfbe9ad929de7d0444")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+eff8fe9b86b3bf879aae5c346e48370167fb0e13")]
 [assembly: System.Reflection.AssemblyProductAttribute("SteamWalletChecker")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SteamWalletChecker")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

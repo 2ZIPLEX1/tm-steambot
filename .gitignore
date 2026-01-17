@@ -100,3 +100,5 @@ tmpclaude-*
 
 # Test files (user-specific)
 test_*.py
+Steamguard.json
+test_config.json

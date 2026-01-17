@@ -1,0 +1,38 @@
+# Steam API
+# steampy==1.1.0  # DEPRECATED - does not work with new Steam API
+steam[client]>=1.4.4  # ValvePython/steam - supports new Steam auth API
+
+# CSGO.TM API (unofficial)
+requests>=2.31.0
+
+# Proxy support
+httpx[socks]>=0.28.1  # SOCKS5 proxy support for Steam API
+pysocks>=1.7.1  # SOCKS proxy support
+
+# Database
+# sqlite3 is built-in
+
+# Configuration
+python-dotenv>=1.0.0
+
+# Telegram Bot
+python-telegram-bot>=20.7
+
+# Scheduling
+apscheduler>=3.10.4
+
+# Logging
+colorlog>=6.8.0
+
+# Async support
+aiohttp>=3.9.0
+aiohttp-socks>=0.8.0  # SOCKS proxy support for bottm
+asyncio-throttle>=1.0.2
+
+# Utils
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+beautifulsoup4>=4.12.0  # HTML parsing
+
+# GUI
+customtkinter>=5.2.0  # Modern GUI framework

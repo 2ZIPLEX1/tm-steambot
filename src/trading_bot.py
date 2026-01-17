@@ -88,6 +88,12 @@ class TradingBot:
             current_steam_price = histogram['highest_buy_order']
 
             # Получаем текущие цены на CSGO.TM
+            if not self.account.csgotm_client:
+                return {
+                    'is_profitable': False,
+                    'reason': 'CSGO.TM клиент не инициализирован'
+                }
+
             csgotm_price_data = self.account.csgotm_client.get_item_price(item_name)
             if not csgotm_price_data or not csgotm_price_data.get('min_price'):
                 return {
@@ -709,6 +715,15 @@ class TradingBot:
             Dict with cycle stats
         """
         logger.info(f"[{self.name}] ===== Running trading cycle =====")
+
+        # Проверяем, что клиенты инициализированы
+        if not self.account.is_logged_in():
+            logger.error(f"[{self.name}] Steam client not logged in")
+            return {'orders_created': 0, 'orders_filled': 0, 'items_listed': 0}
+
+        if not self.account.csgotm_client:
+            logger.error(f"[{self.name}] CSGO.TM client not initialized")
+            return {'orders_created': 0, 'orders_filled': 0, 'items_listed': 0}
 
         stats = {
             'orders_created': 0,

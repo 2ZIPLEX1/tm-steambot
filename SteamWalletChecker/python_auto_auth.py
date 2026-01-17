@@ -84,8 +84,8 @@ class SteamAutoAuthChecker:
             "username": username,
             "password": password,
             "shared_secret": shared_secret,
-            "identity_secret": identity_secret or "",
-            "steamid": steamid or "",
+            "identity_secret": identity_secret if identity_secret else None,
+            "steamid": steamid if steamid else None,
             "auto_login": True
         }
 
@@ -102,6 +102,8 @@ class SteamAutoAuthChecker:
         username: Optional[str] = None,
         password: Optional[str] = None,
         shared_secret: Optional[str] = None,
+        identity_secret: Optional[str] = None,
+        steamid: Optional[str] = None,
         timeout: int = 120
     ) -> Dict[str, Any]:
         """
@@ -130,32 +132,51 @@ class SteamAutoAuthChecker:
                 username=username,
                 password=password,
                 shared_secret=shared_secret,
+                identity_secret=identity_secret,
+                steamid=steamid,
                 config_path=temp_config
             )
 
         try:
             logger.info(f"Checking wallet with config: {config_path}")
 
-            # Запуск процесса
-            # Windows console uses cp866 or cp1251, not utf-8
-            import sys
-            console_encoding = 'cp866' if sys.platform == 'win32' else 'utf-8'
+            # Copy config to exe directory if needed
+            exe_dir = self.exe_path.parent
+            config_name = Path(config_path).name
+            exe_config_path = exe_dir / config_name
+            if exe_config_path != Path(config_path):
+                import shutil
+                shutil.copy2(config_path, exe_config_path)
+                config_to_use = str(exe_config_path)
+            else:
+                config_to_use = config_path
 
             process = subprocess.Popen(
-                [str(self.exe_path), config_path],
+                [str(self.exe_path), config_to_use],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                encoding=console_encoding,
-                errors='replace'  # Replace invalid chars instead of throwing error
+                cwd=str(self.exe_path.parent),  # Set cwd to exe directory
+                shell=True
             )
 
             # Ожидание завершения (увеличен timeout до 120 сек)
             stdout, stderr = process.communicate(timeout=120)
 
+            # Decode output
+            try:
+                stdout = stdout.decode('cp866', errors='replace')
+                stderr = stderr.decode('cp866', errors='replace')
+            except UnicodeDecodeError:
+                stdout = stdout.decode('utf-8', errors='replace')
+                stderr = stderr.decode('utf-8', errors='replace')
+
             if process.returncode != 0:
                 logger.error(f"Process failed: {stderr}")
                 raise RuntimeError(f"Process failed: {stderr}")
+
+            logger.info(f"Process stdout length: {len(stdout)}")
+            logger.debug(f"Process stdout: {stdout}")
+            logger.debug(f"Process stderr: {stderr}")
 
             # Парсинг вывода
             wallet_data = self._parse_output(stdout)
@@ -178,6 +199,12 @@ class SteamAutoAuthChecker:
                 try:
                     os.remove(temp_config)
                     logger.debug(f"Removed temp config: {temp_config}")
+                except:
+                    pass
+            # Remove copied config
+            if exe_config_path.exists() and exe_config_path != Path(config_path):
+                try:
+                    exe_config_path.unlink()
                 except:
                     pass
 
@@ -209,6 +236,7 @@ class SteamAutoAuthChecker:
                 logger.error(f"JSON string: {json_str}")
                 raise RuntimeError(f"Failed to parse JSON: {e}")
 
+        logger.error(f"No JSON markers found in output. Full output: {output}")
         raise RuntimeError("No JSON data in output")
 
     def check_multiple_accounts(

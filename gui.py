@@ -1631,7 +1631,9 @@ class TradingBotGUI(ctk.CTk):
                         checker = SteamWalletBalance(
                             username=account.config.steam_username,
                             password=account.config.steam_password,
-                            shared_secret=account.config.steam_shared_secret
+                            shared_secret=account.config.steam_shared_secret,
+                            identity_secret=account.config.steam_identity_secret,
+                            steamid=account.config.steamid
                         )
 
                         result = checker.get_balance()
@@ -2865,15 +2867,22 @@ class TradingBotGUI(ctk.CTk):
                     self._log(f"Для автоматического определения валюты нужен shared_secret")
                     return
 
-                self._log(f"Используем новый метод SteamWalletChecker с 2FA...")
+                self._log(f"Используем SteamWalletChecker с 2FA...")
                 self._log(f"  Username: {account.config.steam_username}")
                 self._log(f"  Shared secret: {'***' if account.config.steam_shared_secret else 'NO'}")
+
+                # Add delay to avoid rate limiting
+                import time
+                self._log("Ожидание 10 секунд перед запуском SteamWalletChecker...")
+                time.sleep(10)
 
                 # Используем SteamWalletBalance для получения баланса и валюты
                 checker = SteamWalletBalance(
                     username=account.config.steam_username,
                     password=account.config.steam_password,
-                    shared_secret=account.config.steam_shared_secret
+                    shared_secret=account.config.steam_shared_secret,
+                    identity_secret=account.config.steam_identity_secret,
+                    steamid=account.config.steamid
                 )
 
                 self._log(f"Получение баланса через SteamKit2...")

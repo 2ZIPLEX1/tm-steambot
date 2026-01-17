@@ -176,7 +176,7 @@ Examples:
             // Создание аутентификатора
             var authenticator = new SteamGuardAuthenticator(
                 config.SharedSecret,
-                config.IdentitySecret
+                string.IsNullOrEmpty(config.IdentitySecret) ? null : config.IdentitySecret
             );
 
             // Валидация shared_secret (если есть)

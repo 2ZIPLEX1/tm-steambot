@@ -36,6 +36,7 @@ class AccountConfig:
     steam_api_key: str = ''
     steam_shared_secret: str = ''
     steam_identity_secret: str = ''
+    steamid: str = ''  # Steam ID64
 
     # CSGO.TM credentials
     csgotm_api_key: str = ''
@@ -99,23 +100,11 @@ class Account:
             # Create session with proxy
             self._session = self._create_session_with_proxy()
 
-            # Create Steam client with proxy support
-            # Try to get proxy_manager from parent AccountManager if available
-            proxy_manager = None
-            if hasattr(self, '_proxy_manager') and self._proxy_manager:
-                proxy_manager = self._proxy_manager
-                logger.info(f"[{self.name}] Using ProxyManager with {len(proxy_manager.proxies)} proxies")
-
+            # Create Steam client WITHOUT proxy for login (to avoid blocking)
             self.steam_client = SteamClient(
-                proxy=self.config.proxy,
-                proxy_manager=proxy_manager
+                proxy=None,  # No proxy for login
+                proxy_manager=None
             )
-
-            # If proxy is set and session already created, use it
-            # (for backward compatibility)
-            if self.config.proxy and self._session:
-                self.steam_client._session = self._session
-                self.steam_client._setup_proxy()  # Ensure proxy is configured
 
             # Try to login with account-specific cookie file
             # This allows each account to have its own cookies
@@ -127,12 +116,30 @@ class Account:
                 username=self.config.steam_username,
                 password=self.config.steam_password,
                 shared_secret=self.config.steam_shared_secret,
+                identity_secret=self.config.steam_identity_secret,
+                api_key=self.config.steam_api_key,
                 cookie_file=cookie_file,
             ):
                 logger.error(f"[{self.name}] Login failed")
                 return False
 
             logger.info(f"[{self.name}] ✅ Steam logged in")
+
+            # Now set up proxy for subsequent requests
+            if self.config.proxy:
+                logger.info(f"[{self.name}] Setting up proxy after login: {self.config.proxy.split('@')[-1]}")
+                self.steam_client._proxy = self.config.proxy
+                self.steam_client._proxy_manager = proxy_manager
+                self.steam_client._setup_proxy()
+
+            # Save Steam ID if not set
+            if not self.config.steamid:
+                steamid = self.steam_client.get_steamid()
+                if steamid:
+                    self.config.steamid = steamid
+                    logger.info(f"[{self.name}] Saved Steam ID: {steamid}")
+                    # Update config file
+                    self._save_account_config()
 
             # Skip auto-detection on login to avoid rate limiting
             # User can manually detect currency via GUI button if needed
@@ -361,6 +368,7 @@ class AccountManager:
                     steam_api_key=acc_data['steam']['api_key'],
                     steam_shared_secret=acc_data['steam']['shared_secret'],
                     steam_identity_secret=acc_data['steam']['identity_secret'],
+                    steamid=acc_data['steam'].get('steamid', ''),
                     csgotm_api_key=acc_data['csgotm']['api_key'],
                     proxy=acc_data.get('proxy'),
                     max_items=acc_data.get('limits', {}).get('max_items', 10),
@@ -441,6 +449,28 @@ class AccountManager:
     def __len__(self) -> int:
         """Return number of accounts."""
         return len(self.accounts)
+
+    def _save_account_config(self):
+        """Save updated account config to file."""
+        try:
+            # Load current config
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                accounts_data = json.load(f)
+
+            # Find and update this account
+            for acc_data in accounts_data:
+                if acc_data['name'] == self.config.name:
+                    acc_data['steam']['steamid'] = self.config.steamid
+                    break
+
+            # Save back
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(accounts_data, f, indent=2, ensure_ascii=False)
+
+            logger.debug(f"Saved config for account {self.config.name}")
+
+        except Exception as e:
+            logger.error(f"Failed to save config: {e}")
 
     def __iter__(self):
         """Iterate over accounts."""
